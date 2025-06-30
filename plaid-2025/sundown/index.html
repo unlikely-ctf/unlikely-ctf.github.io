@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>The Sundown Vault (Plaid CTF 2025)</title>
+    <link rel="stylesheet" href="https://unlikely-ctf.github.io/site.css">
+    <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1" />
+  </head>
+  <body>
+    
+<nav>
+  <ol>
+    
+    
+    <li><a href="https://unlikely-ctf.github.io">Unlikely CTF Team</a></li>
+    
+    
+    <li><a href="https://unlikely-ctf.github.io/plaid-2025">Plaid CTF 2025</a></li>
+    
+    <li>The Sundown Vault</li>
+  </ol>
+</nav>
+
+    <main>
+      <article>
+        <header>
+          <h1>The Sundown Vault</h1><time datetime="2025-05-03">2025-05-03</time>
+        </header>
+        <p>This was one of the first released challenges, maybe even the first, and it was the first I looked at. The challenge consists of a web application with a simple function: users can tell it secrets, which the application will then hold on to until the specified time, after which they get released.</p>
+<span id="continue-reading"></span>
+<p>As is typical for <code>#web</code> challenges, there’s a system for requesting a live instance (with a real flag), but also a Docker script for local experimentation. As usual, my approach was to build and run the application (<code>docker compose build &amp;&amp; docker compose up</code>), then have a poke around in the code whilst that’s busy.</p>
+<h2 id="initial-code-overview">Initial code overview</h2>
+<p>There’s usually plenty of framework code in any web application like this, but the interesting parts (for a CTF challenge) are usually:</p>
+<ol>
+<li>initialisation code, and especially database setup,</li>
+<li>and any back-end code (which wouldn’t be sent to the browser).</li>
+</ol>
+<p>A quick inspection of the database initialisation (<code>db/initdb.sql</code>) shows that the database is seeded with a couple of things:</p>
+<ul>
+<li>A user (<code>plaid</code>), with a password hash of <code>no-login</code>.</li>
+<li>A secret — a flag placeholder — with the memorable ID <code>13371337-1337-1337-1337-133713371337</code>, set to be revealed on <code>"2026-04-10 21:00:00+00"</code> (just over a year away).</li>
+</ul>
+<p>In addition, when the application starts, the placeholder flag is replaced with the real one:</p>
+<pre data-lang="typescript" class="language-typescript z-code"><code class="language-typescript" data-lang="typescript"><span class="z-source z-ts"><span class="z-string z-template z-ts"><span class="z-variable z-other z-object z-ts">sql</span><span class="z-punctuation z-accessor z-ts">.</span><span class="z-entity z-name z-function z-tagged-template z-ts">unsafe</span></span><span class="z-string z-template z-ts"><span class="z-punctuation z-definition z-string z-template z-begin z-ts">`</span>UPDATE sundown.secret SET secret = <span class="z-meta z-template z-expression z-ts"><span class="z-punctuation z-definition z-template-expression z-begin z-ts">${</span></span><span class="z-meta z-template z-expression z-ts"><span class="z-meta z-embedded z-line z-ts"><span class="z-variable z-other z-object z-ts">env</span><span class="z-punctuation z-accessor z-ts">.</span><span class="z-variable z-other z-constant z-property z-ts">FLAG</span></span><span class="z-punctuation z-definition z-template-expression z-end z-ts">}</span></span>
+</span></span><span class="z-source z-ts"><span class="z-string z-template z-ts">           WHERE id = &#39;13371337-1337-1337-1337-133713371337&#39;<span class="z-punctuation z-definition z-string z-template z-end z-ts">`</span></span>
+</span></code></pre>
+<p>There’s some back-end code in <code>app/src</code>, and we’ll have a closer look at that in a minute.</p>
+<p>The front-end code is in <code>app/ui</code>, but none of that’s likely to be useful because it runs in the browser, so nothing there is secret, and we’ll inevitably end up driving the web API from a script anyway. I barely even looked in here.</p>
+<p>Ok, so this is the situation: we’ve got a server with some kind of web interface, and a database holding the flag, with a few details that we know up front. We need to find a way in through the web interface.</p>
+<h2 id="application-overview">Application overview</h2>
+<p>Around this point, Docker was ready, so I had a quick poke around using a web browser (keeping an eye on the “Network” tab of the developer tools, because that reveals what kind of HTTP traffic is expected in normal operation).</p>
+<p>There’s not a lot to look at in the application itself: you can register, log in and out, and (if logged in) create secrets and read any that have reached their target date. If there were a facility to edit existing secrets, it’d be a likely target, but they seem to be read-only once created. You can list the names of your own secrets before they’re ready to be revealed, but you can’t see their contents. Even if we could log in as <code>plaid</code>, we wouldn’t be able to read the flag using the website.</p>
+<p>It’s notable that the “My Secrets” page uses a WebSocket to receive secret notifications, so it can update the page dynamically, without the user explicitly reloading it.</p>
+<h2 id="back-end-code">Back-end code</h2>
+<p>The most interesting back-end source file is <code>app/src/api.ts</code>, since this implements all of the end-points. It’s a short file (under 400 lines) so I more-or-less read it start to finish. I’m not very familiar with TypeScript, nor with the various libraries used to build the application, but it’s mostly self-explanatory.</p>
+<p>I was looking for poor SQL practice that might allow an injection attack, or some logic error that might allow a bypass, but whilst there are some oddities,<sup class="footnote-reference" id="fr-months4weeks-1"><a href="#fn-months4weeks">1</a></sup> I didn’t spot any obvious vulnerabilities in most of the file. However, at the bottom of the file is the implementation of the WebSocket end-point, and this is where we start to find opportunities:</p>
+<pre data-lang="typescript" class="language-typescript z-code"><code class="language-typescript" data-lang="typescript"><span class="z-source z-ts"><span class="z-meta z-function-call z-ts"><span class="z-variable z-other z-object z-ts">apiRouter</span><span class="z-punctuation z-accessor z-ts">.</span><span class="z-entity z-name z-function z-ts">ws</span></span><span class="z-meta z-brace z-round z-ts">(</span><span class="z-string z-quoted z-double z-ts"><span class="z-punctuation z-definition z-string z-begin z-ts">&quot;</span>/ws<span class="z-punctuation z-definition z-string z-end z-ts">&quot;</span></span><span class="z-punctuation z-separator z-comma z-ts">,</span><span class="z-meta z-arrow z-ts"> <span class="z-meta z-parameters z-ts"><span class="z-punctuation z-definition z-parameters z-begin z-ts">(</span><span class="z-variable z-parameter z-ts">ws</span><span class="z-punctuation z-separator z-parameter z-ts">,</span> <span class="z-variable z-parameter z-ts">req</span><span class="z-punctuation z-definition z-parameters z-end z-ts">)</span></span> </span><span class="z-meta z-arrow z-ts"><span class="z-storage z-type z-function z-arrow z-ts">=&gt;</span> <span class="z-meta z-block z-ts"><span class="z-punctuation z-definition z-block z-ts">{</span>
+</span></span></span><span class="z-source z-ts"><span class="z-meta z-arrow z-ts"><span class="z-meta z-block z-ts">    <span class="z-meta z-var z-expr z-ts"><span class="z-storage z-type z-ts">let</span> <span class="z-meta z-var-single-variable z-expr z-ts"><span class="z-meta z-definition z-variable z-ts"><span class="z-variable z-other z-readwrite z-ts">secretId</span></span><span class="z-meta z-type z-annotation z-ts"><span class="z-keyword z-operator z-type z-annotation z-ts">:</span> <span class="z-support z-type z-primitive z-ts">string</span> <span class="z-keyword z-operator z-type z-ts">|</span> <span class="z-support z-type z-builtin z-ts">undefined</span></span></span></span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></span></span><span class="z-source z-ts"><span class="z-meta z-arrow z-ts"><span class="z-meta z-block z-ts">    <span class="z-meta z-var z-expr z-ts"><span class="z-storage z-type z-ts">let</span> <span class="z-meta z-var-single-variable z-expr z-ts"><span class="z-meta z-definition z-variable z-ts"><span class="z-variable z-other z-readwrite z-ts">secret</span></span><span class="z-meta z-type z-annotation z-ts"><span class="z-keyword z-operator z-type z-annotation z-ts">:</span> <span class="z-support z-type z-primitive z-ts">string</span> <span class="z-keyword z-operator z-type z-ts">|</span> <span class="z-support z-type z-builtin z-ts">undefined</span></span></span></span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></span></span><span class="z-source z-ts"><span class="z-meta z-arrow z-ts"><span class="z-meta z-block z-ts">    <span class="z-meta z-var z-expr z-ts"><span class="z-storage z-type z-ts">let</span> <span class="z-meta z-var-single-variable z-expr z-ts"><span class="z-meta z-definition z-variable z-ts"><span class="z-variable z-other z-readwrite z-ts">timeout</span></span><span class="z-meta z-type z-annotation z-ts"><span class="z-keyword z-operator z-type z-annotation z-ts">:</span> <span class="z-entity z-name z-type z-module z-ts">NodeJS</span><span class="z-punctuation z-accessor z-ts">.</span><span class="z-entity z-name z-type z-ts">Timeout</span> <span class="z-keyword z-operator z-type z-ts">|</span> <span class="z-support z-type z-builtin z-ts">undefined</span></span></span></span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></span></span><span class="z-source z-ts"><span class="z-meta z-arrow z-ts"><span class="z-meta z-block z-ts">    <span class="z-meta z-var z-expr z-ts"><span class="z-storage z-type z-ts">let</span> <span class="z-meta z-var-single-variable z-expr z-ts"><span class="z-meta z-definition z-variable z-ts"><span class="z-variable z-other z-readwrite z-ts">remaining</span></span><span class="z-meta z-type z-annotation z-ts"><span class="z-keyword z-operator z-type z-annotation z-ts">:</span> <span class="z-support z-type z-primitive z-ts">number</span> <span class="z-keyword z-operator z-type z-ts">|</span> <span class="z-support z-type z-builtin z-ts">undefined</span></span></span></span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></span></span><span class="z-source z-ts"><span class="z-meta z-arrow z-ts"><span class="z-meta z-block z-ts">    <span class="z-meta z-var z-expr z-ts"><span class="z-storage z-type z-ts">let</span> <span class="z-meta z-var-single-variable z-expr z-ts"><span class="z-meta z-definition z-variable z-ts"><span class="z-variable z-other z-readwrite z-ts">timeoutDuration</span></span><span class="z-meta z-type z-annotation z-ts"><span class="z-keyword z-operator z-type z-annotation z-ts">:</span> <span class="z-support z-type z-primitive z-ts">number</span> <span class="z-keyword z-operator z-type z-ts">|</span> <span class="z-support z-type z-builtin z-ts">undefined</span></span></span></span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></span></span><span class="z-source z-ts"><span class="z-meta z-arrow z-ts"><span class="z-meta z-block z-ts">    <span class="z-keyword z-operator z-spread z-ts">...</span>
+</span></span></span></code></pre>
+<p>What’s supposed to happen is that the client requests a secret (by its ID):</p>
+<pre data-lang="json" class="language-json z-code"><code class="language-json" data-lang="json"><span class="z-source z-json"><span class="z-meta z-mapping z-json"><span class="z-punctuation z-section z-mapping z-begin z-json">{</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>command<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>open<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-punctuation z-separator z-mapping z-pair z-json">,</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>id<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-value z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>13371337-1337-1337-1337-133713371337<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-punctuation z-section z-mapping z-end z-json">}</span></span>
+</span></code></pre>
+<p>The server then replies with:</p>
+<ol>
+<li>a “Watch” message telling us the name of the secret we just requested,</li>
+<li>periodic “Update” messages with an approximate, human-readable remaining time,</li>
+<li>then finally, a “Reveal” message showing the secret’s text:</li>
+</ol>
+<pre data-lang="json" class="language-json z-code"><code class="language-json" data-lang="json"><span class="z-source z-json"><span class="z-meta z-mapping z-json"><span class="z-punctuation z-section z-mapping z-begin z-json">{</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>kind<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>Watch<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-punctuation z-separator z-mapping z-pair z-json">,</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>id<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-value z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>13371337-1337-1337-1337-133713371337<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-punctuation z-separator z-mapping z-pair z-json">,</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>name<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-value z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>Flag<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-punctuation z-section z-mapping z-end z-json">}</span></span>
+</span><span class="z-source z-json"><span class="z-meta z-mapping z-json"><span class="z-punctuation z-section z-mapping z-begin z-json">{</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>type<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>Update,<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-invalid z-illegal z-expected-mapping-separator z-json">r</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">e</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">m</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">a</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">i</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">n</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">i</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">n</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">g</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>:<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-value z-json"><span class="z-invalid z-illegal z-expected-mapping-key z-json">1</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">y</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>}<span class="z-invalid z-illegal z-unclosed-string z-json">
+</span></span></span><span class="z-meta z-mapping z-value z-json"></span></span><span class="z-source z-json"><span class="z-meta z-mapping z-value z-json"><span class="z-invalid z-illegal z-expected-mapping-key z-json">.</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">.</span><span class="z-invalid z-illegal z-expected-mapping-key z-json">.</span>
+</span></span><span class="z-source z-json"><span class="z-meta z-mapping z-value z-json"><span class="z-invalid z-illegal z-expected-mapping-key z-json">{</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>kind<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-value z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>Reveal<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-punctuation z-separator z-mapping z-pair z-json">,</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>id<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-value z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>13371337-1337-1337-1337-133713371337<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-punctuation z-separator z-mapping z-pair z-json">,</span></span><span class="z-meta z-mapping z-key z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>secret<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span></span><span class="z-meta z-mapping z-value z-json"><span class="z-punctuation z-separator z-mapping z-key-value z-json">:</span></span><span class="z-meta z-mapping z-value z-json"><span class="z-string z-quoted z-double z-json"><span class="z-punctuation z-definition z-string z-begin z-json">&quot;</span>PCTF{???}<span class="z-punctuation z-definition z-string z-end z-json">&quot;</span></span><span class="z-punctuation z-section z-mapping z-end z-json">}</span></span>
+</span></code></pre>
+<p>Here’s the first important observation: using the WebSocket, <strong>anyone can read any user’s secret, as long as its time has come</strong>. That matches the description of the tool, but it’s not actually possible with the web UI.</p>
+<p>The rest of the implementation of <code>"/ws"</code> is a weird-looking state machine involving the five variables listed above, so this deserves a close look.</p>
+<h2 id="too-many-timers">Too many timers</h2>
+<p>Sending “open” sets <code>secret</code> and <code>secretId</code> to refer to the requested secret before anything interesting happens.<sup class="footnote-reference" id="fr-failure-is-no-help-1"><a href="#fn-failure-is-no-help">2</a></sup> It also sets <code>remaining</code> to the amount of time (in milliseconds) until the secret can be revealed.</p>
+<pre data-lang="typescript" class="language-typescript z-code"><code class="language-typescript" data-lang="typescript"><span class="z-source z-ts">    <span class="z-variable z-other z-readwrite z-ts">secretId</span> <span class="z-keyword z-operator z-assignment z-ts">=</span> <span class="z-variable z-other z-object z-ts">secretData</span><span class="z-punctuation z-accessor z-ts">.</span><span class="z-support z-variable z-property z-dom z-ts">id</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span><span class="z-source z-ts">    <span class="z-variable z-other z-readwrite z-ts">secret</span> <span class="z-keyword z-operator z-assignment z-ts">=</span> <span class="z-variable z-other z-object z-ts">secretData</span><span class="z-punctuation z-accessor z-ts">.</span><span class="z-variable z-other z-property z-ts">secret</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span><span class="z-source z-ts">    <span class="z-keyword z-operator z-spread z-ts">...</span>
+</span><span class="z-source z-ts">    <span class="z-variable z-other z-readwrite z-ts">remaining</span> <span class="z-keyword z-operator z-assignment z-ts">=</span> <span class="z-new z-expr z-ts"><span class="z-keyword z-operator z-new z-ts">new</span> <span class="z-entity z-name z-type z-ts">Date</span><span class="z-meta z-brace z-round z-ts">(</span><span class="z-variable z-other z-object z-ts">secretData</span><span class="z-punctuation z-accessor z-ts">.</span><span class="z-variable z-other z-property z-ts">reveal_at</span><span class="z-meta z-brace z-round z-ts">)</span></span><span class="z-meta z-function-call z-ts"><span class="z-punctuation z-accessor z-ts">.</span><span class="z-support z-function z-ts">getTime</span></span><span class="z-meta z-brace z-round z-ts">(</span><span class="z-meta z-brace z-round z-ts">)</span> <span class="z-keyword z-operator z-arithmetic z-ts">-</span> <span class="z-meta z-function-call z-ts"><span class="z-support z-class z-builtin z-ts">Date</span><span class="z-punctuation z-accessor z-ts">.</span><span class="z-entity z-name z-function z-ts">now</span></span><span class="z-meta z-brace z-round z-ts">(</span><span class="z-meta z-brace z-round z-ts">)</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></code></pre>
+<p>If the <code>reveal_at</code> date was in the past, <code>remaining</code> becomes negative (or zero), and then the secret is immediately revealed. Otherwise, a timer is set up to update the client after some period of time:</p>
+<pre data-lang="typescript" class="language-typescript z-code"><code class="language-typescript" data-lang="typescript"><span class="z-source z-ts">    <span class="z-keyword z-control z-conditional z-ts">if</span> <span class="z-meta z-brace z-round z-ts">(</span><span class="z-variable z-other z-readwrite z-ts">remaining</span> <span class="z-keyword z-operator z-relational z-ts">&lt;=</span> <span class="z-constant z-numeric z-decimal z-ts">0</span><span class="z-meta z-brace z-round z-ts">)</span> <span class="z-meta z-block z-ts"><span class="z-punctuation z-definition z-block z-ts">{</span>
+</span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts">        <span class="z-meta z-function-call z-ts"><span class="z-entity z-name z-function z-ts">revealSecret</span></span><span class="z-meta z-brace z-round z-ts">(</span><span class="z-meta z-brace z-round z-ts">)</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts">    <span class="z-punctuation z-definition z-block z-ts">}</span></span> <span class="z-keyword z-control z-conditional z-ts">else</span> <span class="z-meta z-block z-ts"><span class="z-punctuation z-definition z-block z-ts">{</span>
+</span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts">        <span class="z-keyword z-control z-conditional z-ts">if</span> <span class="z-meta z-brace z-round z-ts">(</span><span class="z-variable z-other z-readwrite z-ts">timeoutDuration</span> <span class="z-keyword z-operator z-comparison z-ts">===</span> <span class="z-constant z-language z-undefined z-ts">undefined</span><span class="z-meta z-brace z-round z-ts">)</span> <span class="z-meta z-block z-ts"><span class="z-punctuation z-definition z-block z-ts">{</span>
+</span></span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts"><span class="z-meta z-block z-ts">            <span class="z-meta z-function-call z-ts"><span class="z-entity z-name z-function z-ts">updateTimeoutDuration</span></span><span class="z-meta z-brace z-round z-ts">(</span><span class="z-meta z-brace z-round z-ts">)</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts"><span class="z-meta z-block z-ts">        <span class="z-punctuation z-definition z-block z-ts">}</span></span>
+</span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts">        <span class="z-meta z-function-call z-ts"><span class="z-entity z-name z-function z-ts">updateTimeout</span></span><span class="z-meta z-brace z-round z-ts">(</span><span class="z-meta z-brace z-round z-ts">)</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts">    <span class="z-punctuation z-definition z-block z-ts">}</span></span>
+</span></code></pre>
+<p><code>updateTimeoutDuration()</code> is responsible for setting <code>timeoutDuration</code>, which defines how long to wait before updating the client. It’s also used to decrement the <code>remaining</code> time when the timeout does fire.</p>
+<p><code>updateTimeout()</code> sets up the timer (using the standard <code>setTimeout(..., timeoutDuration)</code>) and saves its handle in <code>timeout</code>. The purpose of <code>timeout</code> seems to be to ensure that timeouts get cleaned up on disconnection, and to ensure that only one timer can exist per connection; <code>updateTimeout()</code> checks it before proceeding.</p>
+<p>Ok, so where are the bugs?</p>
+<p>First, <code>revealSecret()</code> tries to clean up once it’s done:</p>
+<pre data-lang="typescript" class="language-typescript z-code"><code class="language-typescript" data-lang="typescript"><span class="z-source z-ts">    <span class="z-variable z-other z-readwrite z-ts">secretId</span> <span class="z-keyword z-operator z-assignment z-ts">=</span> <span class="z-constant z-language z-undefined z-ts">undefined</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span><span class="z-source z-ts">    <span class="z-variable z-other z-readwrite z-ts">secret</span> <span class="z-keyword z-operator z-assignment z-ts">=</span> <span class="z-constant z-language z-undefined z-ts">undefined</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span><span class="z-source z-ts">    <span class="z-variable z-other z-readwrite z-ts">timeout</span> <span class="z-keyword z-operator z-assignment z-ts">=</span> <span class="z-constant z-language z-undefined z-ts">undefined</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span><span class="z-source z-ts">    <span class="z-variable z-other z-readwrite z-ts">remaining</span> <span class="z-keyword z-operator z-assignment z-ts">=</span> <span class="z-constant z-language z-undefined z-ts">undefined</span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></code></pre>
+<p>However, <strong>it doesn’t actually call <code>clearTimeout()</code></strong>. This forms our first basic primitive, which allows us to “leak” timers so they don’t get cleared (but continue to run):</p>
+
+
+
+
+<object class="diagram" data="/plaid-2025/sundown/sundown-leak.svg" type="image/svg+xml">
+
+
+
+
+
+
+
+
+
+<img  src="https://unlikely-ctf.github.io/processed_images/sundown-leak.e7a30b7a9e28ecec.png" srcset="/plaid-2025/sundown/sundown-leak.png 2x" alt="Timeline diagram showing timer-leak primitive">
+
+
+
+
+
+
+</object>
+
+<p><em>Most responses are noisy and not particularly interesting. I’ll omit them from further diagrams unless they’re notable (such as the secret).</em></p>
+<p>Pretty soon after that, the next bug becomes apparent: because <code>secret</code> is set on request, any <strong>zombie timeouts will update and possibly reveal the most recently requested secret</strong>. We can use this to prematurely take a big chunk off a timer almost immediately:</p>
+
+
+
+
+<object class="diagram" data="/plaid-2025/sundown/sundown-zombie.svg" type="image/svg+xml">
+
+
+
+
+
+
+
+
+
+<img  src="https://unlikely-ctf.github.io/processed_images/sundown-zombie.12538f2e2045b349.png" srcset="/plaid-2025/sundown/sundown-zombie.png 2x" alt="Diagram showing that zombie tasks can prematurely decrement remaining time counters">
+
+
+
+
+
+
+</object>
+
+<p>Both zombie timers are set with short timeouts, then we ask for a secret with a <code>revealAt</code> date far in the future (such as the flag). The first zombie fires and updates <code>timeoutDuration</code>, then when the second fires it updates <code>remaining! -= timeoutDuration!</code>,<sup class="footnote-reference" id="fr-ts-excl-1"><a href="#fn-ts-excl">3</a></sup> which takes a huge chunk off the remaining time.</p>
+<p>Motivated by this early progress, I tried flooding the server with zombie timers, so they’ll all fire in quick succession and reveal the flag very quickly. Because each timer updates <code>timeoutDuration</code> based on the <code>remaining</code> time, it takes several thousand of them to do this, with the final timers chipping off just 100ms each, but this approach reveals the flag in about six minutes on my local Docker instance.</p>
+<p>This doesn’t work on the real instance, however, for two reasons:</p>
+<ul>
+<li>The network latency is much higher, so it takes a long time to set up several thousand timers. If they start triggering before they’re set up, you end up with <code>remaining = NaN</code>, and all useful progress stops.</li>
+<li>The instance is only available for two minutes.</li>
+</ul>
+<p>At this point, I got in a muddle trying to piece together time delays in a novel fashion, but eventually gave up and left this alone whilst I looked at another challenge.</p>
+<hr />
+<h2 id="max-what">Max what?</h2>
+<p>Some time later, whilst thinking about another challenge, I realised the final piece of the puzzle. At the top of <code>app/src/api.ts</code> is a limit on the date of any new secret:</p>
+<pre data-lang="typescript" class="language-typescript z-code"><code class="language-typescript" data-lang="typescript"><span class="z-source z-ts"><span class="z-meta z-var z-expr z-ts"><span class="z-storage z-type z-ts">const</span> <span class="z-meta z-var-single-variable z-expr z-ts"><span class="z-meta z-definition z-variable z-ts"><span class="z-variable z-other z-constant z-ts">MaxSecretDate</span></span> </span><span class="z-keyword z-operator z-assignment z-ts">=</span> <span class="z-string z-quoted z-double z-ts"><span class="z-punctuation z-definition z-string z-begin z-ts">&quot;</span>2030-01-01T00:00:00.000<span class="z-punctuation z-definition z-string z-end z-ts">&quot;</span></span></span><span class="z-punctuation z-terminator z-statement z-ts">;</span>
+</span></code></pre>
+<p>Why is that important? If this limit wasn’t here, then we could modify our early attack by getting the first zombie to set a very large <code>timeoutDuration</code>, so the second zombie consumes all the <code>remaining</code> time at once:</p>
+
+
+
+
+<object class="diagram" data="/plaid-2025/sundown/sundown-nomax.svg" type="image/svg+xml">
+
+
+
+
+
+
+
+
+
+<img  src="https://unlikely-ctf.github.io/processed_images/sundown-nomax.03b541529c5dc8b2.png" srcset="/plaid-2025/sundown/sundown-nomax.png 2x" alt="Diagram showing that if we could bypass the date limit, we could quickly reveal the flag.">
+
+
+
+
+
+
+</object>
+
+<p>The most time we can take off a timer in one go is two years, since this is the biggest in the set of fixed <code>UpdateIntervals</code>, but the flag we want is only set a year away, so that’s fine. However, <code>updateTimeoutDuration</code> uses <code>remaining! / 100</code> as a basis, so we’d need to create a secret with a date 200 years in the future for this to work, and <code>MaxSecretDate</code> prevents that.</p>
+<p>Of course, it doesn’t, and that how we’ll solve this, but it looks like it does:</p>
+<pre data-lang="typescript" class="language-typescript z-code"><code class="language-typescript" data-lang="typescript"><span class="z-source z-ts">    <span class="z-keyword z-control z-conditional z-ts">if</span> <span class="z-meta z-brace z-round z-ts">(</span><span class="z-variable z-other z-readwrite z-ts">s</span> <span class="z-keyword z-operator z-relational z-ts">&gt;</span> <span class="z-variable z-other z-readwrite z-ts">MaxSecretDate</span><span class="z-meta z-brace z-round z-ts">)</span> <span class="z-meta z-block z-ts"><span class="z-punctuation z-definition z-block z-ts">{</span>
+</span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts">        <span class="z-keyword z-operator z-spread z-ts">...</span> <span class="z-comment z-line z-double-slash z-ts"><span class="z-punctuation z-definition z-comment z-ts">//</span></span><span class="z-comment z-line z-double-slash z-ts"> Error</span>
+</span></span><span class="z-source z-ts"><span class="z-meta z-block z-ts">    <span class="z-punctuation z-definition z-block z-ts">}</span></span>
+</span></code></pre>
+<p>Both parameters are strings, not <code>Date</code> objects, but the date has already be parsed and validated as an ISO8601 date (like <code>2025-04-04T21:00:00</code>), and there’s not much room to experiment with that format. Indeed, it is often convenient to use this format <em>because</em> sorting lexically also sorts chronologically.</p>
+<p>The catch, as it turns out, is that ISO8601 specifies an extension format with a leading sign character (and extra digits), and <a href="https://moment.github.io/luxon/api-docs/index.html#datetimefromiso">Luxon's <code>DateTime.fromISO()</code></a> supports it. An ASCII <code>'+'</code> lexically sorts before any ASCII digit, so any <code>+YYYYYY-MM-DD...</code> date will (lexically) sort before any <code>YYYY-MM-DD...</code> date. I picked <code>+275750-01-01</code>, which is near the limit of what Luxon will accept, but plenty far into the future for our purposes.</p>
+<p>A handful of HTTP and WebSocket requests, and we have the flag. Nice!</p>
+<footer class="footnotes">
+<ol class="footnotes-list">
+<li id="fn-months4weeks">
+<p><code>months = Math.floor(weeks / 4)</code> caught my eye for a minute, but the result isn’t used anywhere consequential. <a href="#fr-months4weeks-1">↩</a></p>
+</li>
+<li id="fn-failure-is-no-help">
+<p>There are some basic validity checks, but failure has no useful side effects, so we can ignore those and just focus on valid requests. <a href="#fr-failure-is-no-help-1">↩</a></p>
+</li>
+<li id="fn-ts-excl">
+<p>The exclamation mark in <code>DateTime</code> is apparently a TypeScript annotation asserting that <code>remaining</code> cannot be <code>undefined</code>. It’s not actually true here, and I lost plenty of time trying to exploit that, but getting into that state just results in <code>remaining</code> getting set to <code>NaN</code>, which doesn’t seem to help at all. <a href="#fr-ts-excl-1">↩</a></p>
+</li>
+</ol>
+</footer>
+</article>
+    </main>
+    
+    
+<footer>
+  <div class="licence">
+    Design and content &copy; 2025 The Unlikely CTF
+    Team and its members, licensed as <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a>,
+    except for quotations and where otherwise specified.
+  </div>
+  <div class="licence">
+    The <a href="https://github.com/RingoSeeber/Petrona">Petrona</a> font is
+    used under the terms of <a href="https://unlikely-ctf.github.io/fonts/petrona/OFL.txt" title="OFL licence for Petrona">OFL-1.1</a>.
+    The <a href="https://github.com/nathco/Office-Code-Pro">Office Code Pro</a> font is
+    used under the terms of <a href="https://unlikely-ctf.github.io/fonts/office-code-pro/LICENSE.txt" title="OFL licence for Office Code Pro">OFL-1.1</a>.
+  </div>
+</footer>
+
+    
+  </body>
+</html>

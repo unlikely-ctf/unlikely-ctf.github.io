@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>innov8 (Plaid CTF 2025)</title>
+    <link rel="stylesheet" href="https://unlikely-ctf.github.io/site.css">
+    <meta name="viewport" content="width=device-width,initial-scale=1,minimum-scale=1" />
+  </head>
+  <body>
+    
+<nav>
+  <ol>
+    
+    
+    <li><a href="https://unlikely-ctf.github.io">Unlikely CTF Team</a></li>
+    
+    
+    <li><a href="https://unlikely-ctf.github.io/plaid-2025">Plaid CTF 2025</a></li>
+    
+    <li>innov8</li>
+  </ol>
+</nav>
+
+    <main>
+      <article>
+        <header>
+          <h1>innov8</h1><time datetime="2025-05-03">2025-05-03</time>
+        </header>
+        <p>I’d just solved <a href="/plaid-2025/sundown">Sundown</a> and realised that I probably wasn’t going to solve part two of <a href="/plaid-2025/prospectin">Prospectin'</a>. It was late, and I almost stopped there, but then I saw a puzzle with a temptingly low score, and thought I’d give it a try. It turned out to grant the most efficient points (by time spent) of the whole weekend.</p>
+<span id="continue-reading"></span><h2 id="the-premise">The premise</h2>
+<p>Some secret message — the flag — has been encoded into a sequence of floating-point numbers in a peculiar way. For each bit in the input:</p>
+<ul>
+<li>if the bit is zero, append 24 <code>Math.random()</code> numbers from Node.js,</li>
+<li>and if it’s one, append 24 <code>Math.random()</code> numbers from <code>d8</code>.</li>
+</ul>
+<p>We have the output, and need to work backwards. This appears to be going one of two ways: Either there’s some quirk of the underlying random number generator in one or the other environment, in which case I’d probably struggle to unwind all the threads in an hour, or there’s some kind of obvious pattern in the values themselves.</p>
+<p>The challenge conveniently came with a build of <code>d8</code>,<sup class="footnote-reference" id="fr-d8-build-1"><a href="#fn-d8-build">1</a></sup> and I have Node.js installed, so I dumped a series of <code>Math.random()</code> numbers from each into a terminal. Nothing stood out, but I didn't expect it to be so obvious that I could tell just from that.</p>
+<p>In the back of my mind, I was thinking how I might plot a visualisation, since some random number generators produce <a href="https://en.m.wikipedia.org/wiki/Spectral_test">curious patterns</a> and I thought I might need to spot them. As I was thinking, though, I dumped the sequences into a script that converts each value (as doubles) into their binary representations, and then I spotted the solution by eye:</p>
+<pre class="z-code"><code><span class="z-text z-plain">% node gen.js | julia convert.jl  # convert.jl is my script that shows the bit representation.
+</span><span class="z-text z-plain">0011111111000110000110010110001100110010111101110110100000101000: 0.17264976490588535
+</span><span class="z-text z-plain">0011111111010100001011111010011010100011110111100111100100111100: 0.31540838244281466
+</span><span class="z-text z-plain">0011111111100110000101000110100010110011000010111100100111001000: 0.6899913308137053
+</span><span class="z-text z-plain">0011111111001011100111001100111111010111001001000011000010011000: 0.21572301869344268
+</span><span class="z-text z-plain">0011111111100001001000000011000000000011101001101100011001111010: 0.5351791449849792
+</span><span class="z-text z-plain">0011111111101100010101100111011101010111001000101111111010001100: 0.8855549528015714
+</span><span class="z-text z-plain">0011111111001110001100010110010101010111110100001100010111101000: 0.23588244235865763
+</span><span class="z-text z-plain">0011111110011110000100011001011011001010101010111101011000000000: 0.029363971824713175
+</span><span class="z-text z-plain">0011111111011101011010011111111010100111001000001010010000111000: 0.45959440537496077
+</span><span class="z-text z-plain">0011111111101000000101011101010001101100101000110100000101010000: 0.7526647683935526
+</span><span class="z-text z-plain">0011111110111001110011111100100101011001100011011001010000100000: 0.10082682072022964
+</span><span class="z-text z-plain">0011111111101101100101101001001001001101011101010110010100111000: 0.924630309377938
+</span><span class="z-text z-plain">0011111111101100000010111011100000000101010010011011100001100110: 0.876430521324221
+</span><span class="z-text z-plain">0011111110111100000111101001101000100001111011111001110001010000: 0.10984195068850622
+</span><span class="z-text z-plain">0011111111001011100001010100100111001011010010011011011110111000: 0.21500513483209516
+</span><span class="z-text z-plain">0011111111101010111101001001011101111111001011000010100111110010: 0.8423573955381569
+</span><span class="z-text z-plain">0011111111101000110011110000001110001001101101011001000100010000: 0.7752702417024313
+</span><span class="z-text z-plain">0011111111101000100101011111001010110101010111001100111010110000: 0.7683042089688197
+</span><span class="z-text z-plain">0011111111101110010101111110110101111100000110100011100011010110: 0.9482333587527829
+</span><span class="z-text z-plain">0011111111000010001111001000011100010010011010011110101101011000: 0.14247215651615863
+</span><span class="z-text z-plain">0011111111100100011010000001100110011101011000011011000010010000: 0.6377075265750296
+</span><span class="z-text z-plain">0011111110000001000100110111100001010001101111101110011100000000: 0.008337917322808419
+</span><span class="z-text z-plain">0011111111101111010101111101000011010110111101110001110101111000: 0.9794696997204673
+</span><span class="z-text z-plain">0011111110110011010110010110110111010111100010111111000000110000: 0.07558332931870448
+</span><span class="z-text z-plain">% ./d8 gen.js | julia convert.jl
+</span><span class="z-text z-plain">0011111111100011111110000011010101101101100101010011011011111111: 0.6240489139833868
+</span><span class="z-text z-plain">0011111111100100001110101101110010110011011100111101110000000101: 0.6321853165562749
+</span><span class="z-text z-plain">0011111111101100100101101011001001110110101010001011000010011000: 0.8933956449086677
+</span><span class="z-text z-plain">0011111111101011100001000000111110100110010100001100101001100101: 0.8598707435942968
+</span><span class="z-text z-plain">0011111111000101001001000101010000010010110111010101101011011100: 0.1651711551773677
+</span><span class="z-text z-plain">0011111111101111010010111011100001000011000011010101101100001100: 0.9779931363690095
+</span><span class="z-text z-plain">0011111111100111010101111100000111011010101010101100001100110111: 0.7294625540581369
+</span><span class="z-text z-plain">0011111111101011110101001001110100100111100100011100000101101011: 0.8697038433875098
+</span><span class="z-text z-plain">0011111111101000100000110100111010101000000000000010100000100100: 0.7660287171613658
+</span><span class="z-text z-plain">0011111101110000110100111110001101110110011101011110010010000000: 0.004108322645486884
+</span><span class="z-text z-plain">0011111111100010101010100100011111010100000100010100010111010111: 0.5832862035696803
+</span><span class="z-text z-plain">0011111111100101111100000010101001001110111101111000011000111010: 0.6855670492479427
+</span><span class="z-text z-plain">0011111111100100001100000100111000100110110101000100000000101000: 0.630896640623182
+</span><span class="z-text z-plain">0011111110110000001110100110100000111100011100101001100010101000: 0.063391222722745
+</span><span class="z-text z-plain">0011111111101111111011101000011010010011101100110001110101010011: 0.997866905666266
+</span><span class="z-text z-plain">0011111111100010011101001101001101011111001110100010110001110000: 0.5767609462649386
+</span><span class="z-text z-plain">0011111111100101101111101000000010110000010010011010011101101010: 0.6795047228926994
+</span><span class="z-text z-plain">0011111111010110110010001100110010110010101110001101100101011000: 0.35600583508803174
+</span><span class="z-text z-plain">0011111111101110100111110011000100000000100010111011000100001100: 0.956932545724642
+</span><span class="z-text z-plain">0011111111001111101001011101011010010000100100010100000000111100: 0.24724847849802412
+</span><span class="z-text z-plain">0011111110110110111100010000110110111010100001101001101010010000: 0.0896156864533657
+</span><span class="z-text z-plain">0011111101100010011000010000101001001010011011110000010000000000: 0.0022435379973733127
+</span><span class="z-text z-plain">0011111111011011010111100010101000111101100011010101001100010110: 0.42762237559263505
+</span><span class="z-text z-plain">0011111111100000110111111110000101111010110001010010011101100111: 0.5273291967252874
+</span></code></pre>
+<p>Ok, it's not <em>that</em> obvious, but you can just see it without further processing: when <code>node</code> is used, the least significant bit is always zero. When <code>d8</code> is used, it's random (as it should be). I'm curious about why Node is different, but I didn't need to investigate to solve the challenge.</p>
+<h2 id="the-solution">The solution</h2>
+<p>It took a few minutes to plumb everything together and turn each set of 24 numbers into a bit, then the string of bits into a string of ASCII characters. The whole solver is just a few lines:</p>
+<pre data-lang="julia" class="language-julia z-code"><code class="language-julia" data-lang="julia"><span class="z-source z-julia">lsbs <span class="z-keyword z-operator z-assignment z-julia">=</span> <span class="z-meta z-sequence z-julia"><span class="z-punctuation z-section z-sequence z-begin z-julia">[</span><span class="z-punctuation z-section z-sequence z-end z-julia">]</span></span>
+</span><span class="z-source z-julia">bits <span class="z-keyword z-operator z-assignment z-julia">=</span> <span class="z-meta z-sequence z-julia"><span class="z-punctuation z-section z-sequence z-begin z-julia">[</span><span class="z-punctuation z-section z-sequence z-end z-julia">]</span></span>
+</span><span class="z-source z-julia"><span class="z-keyword z-control z-julia">for</span> line <span class="z-keyword z-control z-julia">in</span> eachline<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span><span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span><span class="z-source z-julia">    f <span class="z-keyword z-operator z-assignment z-julia">=</span> parse<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>Float<span class="z-constant z-numeric z-julia">64</span>, line<span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span><span class="z-source z-julia">    bs <span class="z-keyword z-operator z-assignment z-julia">=</span> bitstring<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>f<span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span><span class="z-source z-julia">    push<span class="z-keyword z-operator z-julia">!</span><span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>lsbs, last<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>bs<span class="z-punctuation z-section z-group z-end z-julia">)</span></span><span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span><span class="z-source z-julia">    <span class="z-keyword z-control z-julia">if</span> length<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>lsbs<span class="z-punctuation z-section z-group z-end z-julia">)</span></span> <span class="z-keyword z-operator z-julia">==</span> <span class="z-constant z-numeric z-julia">24</span>
+</span><span class="z-source z-julia">        push<span class="z-keyword z-operator z-julia">!</span><span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>bits, all<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>b <span class="z-keyword z-operator z-julia">-&gt;</span> b <span class="z-keyword z-operator z-julia">==</span> <span class="z-meta z-string z-julia"><span class="z-string z-quoted z-single z-julia"><span class="z-punctuation z-definition z-string z-begin z-julia">&#39;</span></span></span><span class="z-meta z-string z-julia"><span class="z-string z-quoted z-single z-julia">0<span class="z-punctuation z-definition z-string z-end z-julia">&#39;</span></span></span>, lsbs<span class="z-punctuation z-section z-group z-end z-julia">)</span></span><span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span><span class="z-source z-julia">        empty<span class="z-keyword z-operator z-julia">!</span><span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>lsbs<span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span><span class="z-source z-julia">    <span class="z-keyword z-other z-julia">end</span>
+</span><span class="z-source z-julia"><span class="z-keyword z-other z-julia">end</span>
+</span><span class="z-source z-julia"><span class="z-keyword z-control z-julia">while</span> length<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>bits<span class="z-punctuation z-section z-group z-end z-julia">)</span></span> <span class="z-keyword z-operator z-julia">&gt;=</span> <span class="z-constant z-numeric z-julia">8</span>
+</span><span class="z-source z-julia">    byte <span class="z-keyword z-operator z-assignment z-julia">=</span> <span class="z-constant z-numeric z-julia">0</span>
+</span><span class="z-source z-julia">    <span class="z-keyword z-control z-julia">for</span> _ <span class="z-keyword z-control z-julia">in</span> <span class="z-constant z-numeric z-julia">1</span><span class="z-keyword z-operator z-colon z-julia">:</span><span class="z-constant z-numeric z-julia">8</span>
+</span><span class="z-source z-julia">        byte <span class="z-keyword z-operator z-assignment z-julia">=</span> <span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>byte <span class="z-keyword z-operator z-julia">&lt;</span><span class="z-keyword z-operator z-julia">&lt;</span> <span class="z-constant z-numeric z-julia">1</span><span class="z-punctuation z-section z-group z-end z-julia">)</span></span> <span class="z-keyword z-operator z-julia">|</span> popfirst<span class="z-keyword z-operator z-julia">!</span><span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>bits<span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span><span class="z-source z-julia">    <span class="z-keyword z-other z-julia">end</span>
+</span><span class="z-source z-julia">    print<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>Char<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span>byte<span class="z-punctuation z-section z-group z-end z-julia">)</span></span><span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span><span class="z-source z-julia"><span class="z-keyword z-other z-julia">end</span>
+</span><span class="z-source z-julia">println<span class="z-meta z-group z-julia"><span class="z-punctuation z-section z-group z-begin z-julia">(</span><span class="z-punctuation z-section z-group z-end z-julia">)</span></span>
+</span></code></pre>
+<p>The solver spits out the flag, and also a password to get started with part two, but I didn't even attempt it. I had just 30 minutes left and part two looked like real cryptography, but it was very satisfying to end the CTF with a quick solution.</p>
+
+<div class="status">
+  <code>part one</code>: 
+  <span class="solved">solved</span>
+</div>
+
+<footer class="footnotes">
+<ol class="footnotes-list">
+<li id="fn-d8-build">
+<p>I did start my own build of <code>d8</code>, using the provided Docker script, but I’d solved the challenge long before it finished. <a href="#fr-d8-build-1">↩</a></p>
+</li>
+</ol>
+</footer>
+</article>
+    </main>
+    
+    
+<footer>
+  <div class="licence">
+    Design and content &copy; 2025 The Unlikely CTF
+    Team and its members, licensed as <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a>,
+    except for quotations and where otherwise specified.
+  </div>
+  <div class="licence">
+    The <a href="https://github.com/RingoSeeber/Petrona">Petrona</a> font is
+    used under the terms of <a href="https://unlikely-ctf.github.io/fonts/petrona/OFL.txt" title="OFL licence for Petrona">OFL-1.1</a>.
+    The <a href="https://github.com/nathco/Office-Code-Pro">Office Code Pro</a> font is
+    used under the terms of <a href="https://unlikely-ctf.github.io/fonts/office-code-pro/LICENSE.txt" title="OFL licence for Office Code Pro">OFL-1.1</a>.
+  </div>
+</footer>
+
+    
+  </body>
+</html>
